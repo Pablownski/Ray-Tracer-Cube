@@ -8,6 +8,10 @@ mod material;
 mod ray;
 mod renderer;
 mod scene;
+mod texture;
+
+use std::rc::Rc;
+use std::time::Instant;
 
 use camera::Camera;
 use color::Color;
@@ -16,6 +20,7 @@ use framebuffer::Framebuffer;
 use light::Light;
 use minifb::{Key, Window, WindowOptions};
 use nalgebra_glm::vec3;
+use texture::Texture;
 
 const WIDTH: usize = 640;
 const HEIGHT: usize = 360;
@@ -26,6 +31,7 @@ const INITIAL_RADIUS: f32 = 6.5;
 const ORBIT_SPEED: f32 = 0.03;
 const ZOOM_SPEED: f32 = 0.15;
 const CAMERA_TARGET_HEIGHT: f32 = 1.2;
+const TEXTURE_SIZE: usize = 512;
 
 fn new_camera() -> Camera {
     Camera::new(
@@ -41,11 +47,17 @@ fn build_light() -> Light {
     Light::new(vec3(2.5, 5.0, -6.0), Color::new(1.0, 0.97, 0.9), 1.4)
 }
 
-fn render(framebuffer: &mut Framebuffer, camera: &Camera, cubes: &[Cube], light: &Light) {
+fn render(
+    framebuffer: &mut Framebuffer,
+    camera: &Camera,
+    cubes: &[Cube],
+    light: &Light,
+    time: f32,
+) {
     for y in 0..framebuffer.height {
         for x in 0..framebuffer.width {
             let ray = camera.generate_ray(x, y, framebuffer.width, framebuffer.height);
-            let color = renderer::trace(&ray, cubes, light);
+            let color = renderer::trace(&ray, cubes, light, time);
             framebuffer.set_pixel(x, y, color.to_u32());
         }
     }
@@ -72,18 +84,17 @@ fn write_ppm(framebuffer: &Framebuffer, path: &std::path::Path) {
         .expect("no se pudo escribir los pixeles del frame");
 }
 
-const GIF_ORBIT_AMPLITUDE_DEGREES: f32 = 22.0;
+const GIF_DURATION_SECONDS: f32 = 4.0;
 
-fn capture_orbit_frames(output_dir: &std::path::Path, frame_count: usize) {
+fn capture_orbit_frames(output_dir: &std::path::Path, frame_count: usize, texture: Rc<Texture>) {
     std::fs::create_dir_all(output_dir).expect("no se pudo crear el directorio de salida");
 
-    let cubes = scene::build_scene();
+    let cubes = scene::build_scene(texture);
     let light = build_light();
-    let amplitude = GIF_ORBIT_AMPLITUDE_DEGREES.to_radians();
 
     for i in 0..frame_count {
         let phase = (i as f32 / frame_count as f32) * std::f32::consts::TAU;
-        let yaw = INITIAL_YAW + amplitude * phase.sin();
+        let yaw = INITIAL_YAW + phase;
         let camera = Camera::new(
             vec3(0.0, CAMERA_TARGET_HEIGHT, 0.0),
             yaw,
@@ -91,9 +102,10 @@ fn capture_orbit_frames(output_dir: &std::path::Path, frame_count: usize) {
             INITIAL_RADIUS,
             FOV_DEGREES,
         );
+        let time = (i as f32 / frame_count as f32) * GIF_DURATION_SECONDS;
 
         let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT);
-        render(&mut framebuffer, &camera, &cubes, &light);
+        render(&mut framebuffer, &camera, &cubes, &light, time);
 
         let path = output_dir.join(format!("frame_{i:04}.ppm"));
         write_ppm(&framebuffer, &path);
@@ -101,6 +113,8 @@ fn capture_orbit_frames(output_dir: &std::path::Path, frame_count: usize) {
 }
 
 fn main() {
+    let texture = Rc::new(Texture::generate_rune_panel(TEXTURE_SIZE));
+
     let args: Vec<String> = std::env::args().collect();
     if let Some(gif_index) = args.iter().position(|a| a == "--gif") {
         let output_dir = args
@@ -112,7 +126,7 @@ fn main() {
             .and_then(|s| s.parse().ok())
             .unwrap_or(60);
 
-        capture_orbit_frames(&output_dir, frame_count);
+        capture_orbit_frames(&output_dir, frame_count, texture);
         println!(
             "{} frames escritos en {}",
             frame_count,
@@ -121,13 +135,16 @@ fn main() {
         return;
     }
 
+    std::fs::create_dir_all("assets").expect("no se pudo crear el directorio assets");
+    texture.save_png(std::path::Path::new("assets/cube_texture.png"));
+
     let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT);
 
-    let cubes = scene::build_scene();
+    let cubes = scene::build_scene(texture);
     let light = build_light();
 
     let mut camera = new_camera();
-    let mut dirty = true;
+    let start_time = Instant::now();
 
     let mut window = Window::new(
         "Cubo con Raytracing",
@@ -142,37 +159,28 @@ fn main() {
     while window.is_open() && !window.is_key_down(Key::Escape) {
         if window.is_key_down(Key::Left) {
             camera.orbit(-ORBIT_SPEED, 0.0);
-            dirty = true;
         }
         if window.is_key_down(Key::Right) {
             camera.orbit(ORBIT_SPEED, 0.0);
-            dirty = true;
         }
         if window.is_key_down(Key::Up) {
             camera.orbit(0.0, ORBIT_SPEED);
-            dirty = true;
         }
         if window.is_key_down(Key::Down) {
             camera.orbit(0.0, -ORBIT_SPEED);
-            dirty = true;
         }
         if window.is_key_down(Key::Q) {
             camera.zoom(-ZOOM_SPEED);
-            dirty = true;
         }
         if window.is_key_down(Key::E) {
             camera.zoom(ZOOM_SPEED);
-            dirty = true;
         }
         if window.is_key_pressed(Key::R, minifb::KeyRepeat::No) {
             camera = new_camera();
-            dirty = true;
         }
 
-        if dirty {
-            render(&mut framebuffer, &camera, &cubes, &light);
-            dirty = false;
-        }
+        let time = start_time.elapsed().as_secs_f32();
+        render(&mut framebuffer, &camera, &cubes, &light, time);
 
         window
             .update_with_buffer(&framebuffer.buffer, framebuffer.width, framebuffer.height)
