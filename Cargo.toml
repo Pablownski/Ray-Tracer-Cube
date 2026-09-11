@@ -1,0 +1,11 @@
+[package]
+name = "cubo_raytracer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+minifb = "0.26.0"
+nalgebra-glm = "0.18.0"
+
+[profile.dev]
+opt-level = 3
