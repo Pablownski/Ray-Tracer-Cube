@@ -43,29 +43,45 @@ impl Cube {
 
         let distance = if t_near > EPSILON { t_near } else { t_far };
         let point = ray.at(distance);
-        let normal = self.normal_at(point);
+        let (normal, u, v) = self.face_data(point);
 
         Some(HitRecord {
             distance,
             point,
             normal,
-            material: self.material,
+            u,
+            v,
+            material: self.material.clone(),
         })
     }
 
-    fn normal_at(&self, point: Vec3) -> Vec3 {
+    fn face_data(&self, point: Vec3) -> (Vec3, f32, f32) {
+        let size = self.max - self.min;
+
         if (point.x - self.min.x).abs() < EPSILON {
-            vec3(-1.0, 0.0, 0.0)
+            let u = (point.z - self.min.z) / size.z;
+            let v = (point.y - self.min.y) / size.y;
+            (vec3(-1.0, 0.0, 0.0), u, v)
         } else if (point.x - self.max.x).abs() < EPSILON {
-            vec3(1.0, 0.0, 0.0)
+            let u = 1.0 - (point.z - self.min.z) / size.z;
+            let v = (point.y - self.min.y) / size.y;
+            (vec3(1.0, 0.0, 0.0), u, v)
         } else if (point.y - self.min.y).abs() < EPSILON {
-            vec3(0.0, -1.0, 0.0)
+            let u = (point.x - self.min.x) / size.x;
+            let v = (point.z - self.min.z) / size.z;
+            (vec3(0.0, -1.0, 0.0), u, v)
         } else if (point.y - self.max.y).abs() < EPSILON {
-            vec3(0.0, 1.0, 0.0)
+            let u = (point.x - self.min.x) / size.x;
+            let v = 1.0 - (point.z - self.min.z) / size.z;
+            (vec3(0.0, 1.0, 0.0), u, v)
         } else if (point.z - self.min.z).abs() < EPSILON {
-            vec3(0.0, 0.0, -1.0)
+            let u = 1.0 - (point.x - self.min.x) / size.x;
+            let v = (point.y - self.min.y) / size.y;
+            (vec3(0.0, 0.0, -1.0), u, v)
         } else {
-            vec3(0.0, 0.0, 1.0)
+            let u = (point.x - self.min.x) / size.x;
+            let v = (point.y - self.min.y) / size.y;
+            (vec3(0.0, 0.0, 1.0), u, v)
         }
     }
 }
