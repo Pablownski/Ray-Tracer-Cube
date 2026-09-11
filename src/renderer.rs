@@ -17,15 +17,32 @@ const SKY_BLUE: Color = Color {
     b: 0.75,
 };
 
+const PULSE_SPEED: f32 = 2.0;
+const PULSE_MIN: f32 = 0.35;
+const PULSE_MAX: f32 = 1.0;
+
 pub fn lambert_factor(normal: Vec3, point: Vec3, light: &Light) -> f32 {
     let light_dir = normalize(&(light.position - point));
     normal.dot(&light_dir).max(0.0)
 }
 
-pub fn shade(hit: &HitRecord, light: &Light) -> Color {
+pub fn pulse_factor(time: f32) -> f32 {
+    let wave = (time * PULSE_SPEED).sin() * 0.5 + 0.5;
+    PULSE_MIN + (PULSE_MAX - PULSE_MIN) * wave
+}
+
+pub fn shade(hit: &HitRecord, light: &Light, time: f32) -> Color {
+    let base_color = match &hit.material.texture {
+        Some(texture) => texture.sample(hit.u, hit.v),
+        None => hit.material.diffuse,
+    };
+
     let factor = lambert_factor(hit.normal, hit.point, light);
-    let surface_color = hit.material.diffuse.mul(light.color);
-    surface_color.scale(factor * light.intensity).clamp()
+    let lit = base_color.mul(light.color).scale(factor * light.intensity);
+
+    let glow = base_color.scale(hit.material.emissive_strength * pulse_factor(time));
+
+    lit.add(glow).clamp()
 }
 
 pub fn background_color(direction: Vec3) -> Color {
@@ -33,9 +50,9 @@ pub fn background_color(direction: Vec3) -> Color {
     SUNSET_HORIZON.scale(1.0 - t).add(SKY_BLUE.scale(t))
 }
 
-pub fn trace(ray: &Ray, cubes: &[Cube], light: &Light) -> Color {
+pub fn trace(ray: &Ray, cubes: &[Cube], light: &Light, time: f32) -> Color {
     match cast_ray(ray, cubes) {
-        Some(hit) => shade(&hit, light),
+        Some(hit) => shade(&hit, light, time),
         None => background_color(ray.direction),
     }
 }
@@ -47,6 +64,16 @@ mod tests {
 
     fn white_light(position: Vec3) -> Light {
         Light::new(position, Color::new(1.0, 1.0, 1.0), 1.0)
+    }
+
+    #[test]
+    fn pulse_factor_stays_within_configured_bounds() {
+        for i in 0..100 {
+            let t = i as f32 * 0.1;
+            let pulse = pulse_factor(t);
+            assert!(pulse >= PULSE_MIN - 1e-5);
+            assert!(pulse <= PULSE_MAX + 1e-5);
+        }
     }
 
     #[test]
@@ -86,11 +113,13 @@ mod tests {
             distance: 1.0,
             point: vec3(0.0, 0.0, 0.0),
             normal: vec3(0.0, 1.0, 0.0),
+            u: 0.0,
+            v: 0.0,
             material: crate::material::Material::new(Color::new(0.5, 0.5, 0.5)),
         };
         let light = Light::new(vec3(0.0, 5.0, 0.0), Color::new(1.0, 1.0, 1.0), 0.5);
 
-        let color = shade(&hit, &light);
+        let color = shade(&hit, &light, 0.0);
 
         assert!((color.r - 0.25).abs() < 1e-5);
         assert!((color.g - 0.25).abs() < 1e-5);
@@ -103,13 +132,39 @@ mod tests {
             distance: 1.0,
             point: vec3(0.0, 0.0, 0.0),
             normal: vec3(0.0, 1.0, 0.0),
+            u: 0.0,
+            v: 0.0,
             material: crate::material::Material::new(Color::new(1.0, 1.0, 1.0)),
         };
         let light = Light::new(vec3(0.0, 5.0, 0.0), Color::new(1.0, 1.0, 1.0), 5.0);
 
-        let color = shade(&hit, &light);
+        let color = shade(&hit, &light, 0.0);
 
         assert_eq!((color.r, color.g, color.b), (1.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn shade_adds_pulsing_emissive_glow_from_texture_color() {
+        let hit = HitRecord {
+            distance: 1.0,
+            point: vec3(0.0, 0.0, 0.0),
+            normal: vec3(0.0, -1.0, 0.0),
+            u: 0.0,
+            v: 0.0,
+            material: crate::material::Material::textured(
+                std::rc::Rc::new(crate::texture::Texture::from_pixels(
+                    1,
+                    1,
+                    vec![Color::new(1.0, 1.0, 1.0)],
+                )),
+                1.0,
+            ),
+        };
+        let light = Light::new(vec3(0.0, -5.0, 0.0), Color::new(1.0, 1.0, 1.0), 0.0);
+
+        let color = shade(&hit, &light, 0.0);
+
+        assert!(color.r > 0.0);
     }
 
     #[test]
@@ -130,7 +185,7 @@ mod tests {
         let light = white_light(vec3(0.0, 5.0, 0.0));
         let ray = Ray::new(vec3(0.0, 0.0, -5.0), vec3(0.0, 0.0, 1.0));
 
-        let traced = trace(&ray, &cubes, &light);
+        let traced = trace(&ray, &cubes, &light, 0.0);
         let expected = background_color(ray.direction);
 
         assert_eq!(
